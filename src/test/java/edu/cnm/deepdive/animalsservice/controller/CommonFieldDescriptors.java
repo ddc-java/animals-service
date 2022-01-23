@@ -1,4 +1,4 @@
-package edu.cnm.deepdive.animalsservice;
+package edu.cnm.deepdive.animalsservice.controller;
 
 import org.springframework.restdocs.payload.FieldDescriptor;
 import org.springframework.restdocs.payload.JsonFieldType;

@@ -55,133 +55,133 @@ import org.springframework.web.server.ResponseStatusException;
 @Profile("service")
 public class ImageController {
 
-    public static final String ATTACHMENT_DISPOSITION_FORMAT = "attachment; filename=\"%s\"";
-    public static final String IMAGE_NOT_FOUND_REASON = "Image not found";
-    public static final String NOT_RETRIEVED_MESSAGE = "Unable to retrieve previously uploaded file";
-    private static final String UUID_PARAMETER_PATTERN = "/{externalKey:[0-9a-fA-F\\-]{32,36}}";
-    private static final String DESCRIPTION_PROPERTY_PATTERN =
-            UUID_PARAMETER_PATTERN + "/description";
-    private static final String CONTENT_PROPERTY_PATTERN =
-            ParameterPatterns.UUID_PATH_PARAMETER_PATTERN + "/content";
-    private static final String NOT_STORED_MESSAGE = "Unable to store uploaded content";
-    private static final String NOT_WHITELISTED_MESSAGE = "Upload MIME type not in whitelist";
-    private static final String FILE_STORE_FAILURE_MESSAGE = "File store error";
+  public static final String ATTACHMENT_DISPOSITION_FORMAT = "attachment; filename=\"%s\"";
+  public static final String IMAGE_NOT_FOUND_REASON = "Image not found";
+  public static final String NOT_RETRIEVED_MESSAGE = "Unable to retrieve previously uploaded file";
+  private static final String UUID_PARAMETER_PATTERN = "/{externalKey:[0-9a-fA-F\\-]{32,36}}";
+  private static final String DESCRIPTION_PROPERTY_PATTERN =
+      UUID_PARAMETER_PATTERN + "/description";
+  private static final String CONTENT_PROPERTY_PATTERN =
+      ParameterPatterns.UUID_PATH_PARAMETER_PATTERN + "/content";
+  private static final String NOT_STORED_MESSAGE = "Unable to store uploaded content";
+  private static final String NOT_WHITELISTED_MESSAGE = "Upload MIME type not in whitelist";
+  private static final String FILE_STORE_FAILURE_MESSAGE = "File store error";
 
-    private final ImageService imageService;
-    private final ObjectMapper mapper;
+  private final ImageService imageService;
+  private final ObjectMapper mapper;
 
 
-    public ImageController(ImageService imageService,
-                           ObjectMapper mapper) {
-        this.imageService = imageService;
-        this.mapper = mapper;
+  public ImageController(ImageService imageService,
+      ObjectMapper mapper) {
+    this.imageService = imageService;
+    this.mapper = mapper;
+  }
+
+  @JsonView(ImageView.Full.class)
+  @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<Image> post(
+      @RequestParam MultipartFile file,
+      @RequestParam String title,
+      @RequestParam(required = false) String description
+  ) {
+    try {
+      Image image = imageService.store(file, title, description);
+
+      return ResponseEntity.created(image.getHref()).body(image);
+    } catch (IOException e) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR, NOT_STORED_MESSAGE, e);
+    } catch (HttpMediaTypeNotAcceptableException e) {
+      throw new ResponseStatusException(
+          HttpStatus.UNSUPPORTED_MEDIA_TYPE, NOT_WHITELISTED_MESSAGE, e);
     }
+  }
 
-    @JsonView(ImageView.Full.class)
-    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Image> post(
-            @RequestParam MultipartFile file,
-            @RequestParam String title,
-            @RequestParam(required = false) String description
-    ) {
-        try {
-            Image image = imageService.store(file, title, description);
+  @JsonView(ImageView.Full.class)
+  @GetMapping(value = UUID_PARAMETER_PATTERN, produces = MediaType.APPLICATION_JSON_VALUE)
+  public Image get(@PathVariable UUID externalKey) {
+    return imageService
+        .get(externalKey)
+        .orElseThrow(this::imageNotFound);
+  }
 
-            return ResponseEntity.created(image.getHref()).body(image);
-        } catch (IOException e) {
+  @JsonView(ImageView.Partial.class)
+  @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
+  public Iterable<Image> list() {
+    return imageService.list();
+  }
+
+  @DeleteMapping(value = BaseParameterPatterns.UUID_PATH_PARAMETER_PATTERN)
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void delete(@PathVariable UUID externalKey) {
+    imageService.get(externalKey)
+        .ifPresentOrElse(
+            image -> {
+              try {
+                imageService.delete(image);
+              } catch (IOException e) {
+                throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR, FILE_STORE_FAILURE_MESSAGE, e);
+              }
+            },
+            () -> {
+              throw new ImageNotFoundException();
+            }
+        );
+  }
+
+  @GetMapping(value = DESCRIPTION_PROPERTY_PATTERN, produces = {
+      MediaType.APPLICATION_JSON_VALUE})
+  public String getDescription(@PathVariable UUID externalKey) {
+    return imageService.get(externalKey)
+        .map(new Function<Image, String>() {
+          @Override
+          public String apply(Image image) {
+            return image.getDescription();
+          }
+        })
+        .orElseThrow(NotFoundException::new);
+  }
+
+  @PutMapping(value = DESCRIPTION_PROPERTY_PATTERN, consumes = {
+      MediaType.APPLICATION_JSON_VALUE}, produces = {MediaType.APPLICATION_JSON_VALUE})
+  public String putDescription(@PathVariable UUID externalKey, @RequestBody String description)
+      throws JsonProcessingException {
+    String fixedDescription = mapper.readValue(description, String.class);
+    return imageService.updateDescription(externalKey, fixedDescription)
+        .map((newDescription) -> {
+          try {
+            return mapper.writeValueAsString(newDescription);
+          } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException(e);
+          }
+        })
+        .orElseThrow(this::imageNotFound);
+  }
+
+  @GetMapping(value = CONTENT_PROPERTY_PATTERN)
+  public ResponseEntity<Resource> getContent(
+      @PathVariable UUID externalKey) {
+    return imageService.get(externalKey)
+        .map((image) -> {
+          try {
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, dispositionHeader(image.getName()))
+                .header(HttpHeaders.CONTENT_TYPE, image.getContentType())
+                .body(imageService.retrieve(image));
+          } catch (IOException e) {
             throw new ResponseStatusException(
-                    HttpStatus.INTERNAL_SERVER_ERROR, NOT_STORED_MESSAGE, e);
-        } catch (HttpMediaTypeNotAcceptableException e) {
-            throw new ResponseStatusException(
-                    HttpStatus.UNSUPPORTED_MEDIA_TYPE, NOT_WHITELISTED_MESSAGE, e);
-        }
-    }
+                HttpStatus.INTERNAL_SERVER_ERROR, NOT_RETRIEVED_MESSAGE, e);
+          }
+        })
+        .orElseThrow(ImageNotFoundException::new);
+  }
 
-    @JsonView(ImageView.Full.class)
-    @GetMapping(value = UUID_PARAMETER_PATTERN, produces = MediaType.APPLICATION_JSON_VALUE)
-    public Image get(@PathVariable UUID externalKey) {
-        return imageService
-                .get(externalKey)
-                .orElseThrow(this::imageNotFound);
-    }
+  private ResponseStatusException imageNotFound() {
+    return new ResponseStatusException(HttpStatus.NOT_FOUND, IMAGE_NOT_FOUND_REASON);
+  }
 
-    @JsonView(ImageView.Partial.class)
-    @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
-    public Iterable<Image> list() {
-        return imageService.list();
-    }
-
-    @DeleteMapping(value = BaseParameterPatterns.UUID_PATH_PARAMETER_PATTERN)
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable UUID externalKey) {
-        imageService.get(externalKey)
-                .ifPresentOrElse(
-                        image -> {
-                            try {
-                                imageService.delete(image);
-                            } catch (IOException e) {
-                                throw new ResponseStatusException(
-                                        HttpStatus.INTERNAL_SERVER_ERROR, FILE_STORE_FAILURE_MESSAGE, e);
-                            }
-                        },
-                        () -> {
-                            throw new ImageNotFoundException();
-                        }
-                );
-    }
-
-    @GetMapping(value = DESCRIPTION_PROPERTY_PATTERN, produces = {
-            MediaType.APPLICATION_JSON_VALUE})
-    public String getDescription(@PathVariable UUID externalKey) {
-        return imageService.get(externalKey)
-                .map(new Function<Image, String>() {
-                    @Override
-                    public String apply(Image image) {
-                        return image.getDescription();
-                    }
-                })
-                .orElseThrow(NotFoundException::new);
-    }
-
-    @PutMapping(value = DESCRIPTION_PROPERTY_PATTERN, consumes = {
-            MediaType.APPLICATION_JSON_VALUE}, produces = {MediaType.APPLICATION_JSON_VALUE})
-    public String putDescription(@PathVariable UUID externalKey, @RequestBody String description)
-            throws JsonProcessingException {
-        String fixedDescription = mapper.readValue(description, String.class);
-        return imageService.updateDescription(externalKey, fixedDescription)
-                .map((newDescription) -> {
-                    try {
-                        return mapper.writeValueAsString(newDescription);
-                    } catch (JsonProcessingException e) {
-                        throw new IllegalArgumentException(e);
-                    }
-                })
-                .orElseThrow(this::imageNotFound);
-    }
-
-    @GetMapping(value = CONTENT_PROPERTY_PATTERN)
-    public ResponseEntity<Resource> getContent(
-            @PathVariable UUID externalKey) {
-        return imageService.get(externalKey)
-                .map((image) -> {
-                    try {
-                        return ResponseEntity.ok()
-                                .header(HttpHeaders.CONTENT_DISPOSITION, dispositionHeader(image.getName()))
-                                .header(HttpHeaders.CONTENT_TYPE, image.getContentType())
-                                .body(imageService.retrieve(image));
-                    } catch (IOException e) {
-                        throw new ResponseStatusException(
-                                HttpStatus.INTERNAL_SERVER_ERROR, NOT_RETRIEVED_MESSAGE, e);
-                    }
-                })
-                .orElseThrow(ImageNotFoundException::new);
-    }
-
-    private ResponseStatusException imageNotFound() {
-        return new ResponseStatusException(HttpStatus.NOT_FOUND, IMAGE_NOT_FOUND_REASON);
-    }
-
-    private String dispositionHeader(String filename) {
-        return String.format(ATTACHMENT_DISPOSITION_FORMAT, filename);
-    }
+  private String dispositionHeader(String filename) {
+    return String.format(ATTACHMENT_DISPOSITION_FORMAT, filename);
+  }
 }

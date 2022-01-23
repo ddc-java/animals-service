@@ -49,13 +49,13 @@ public class ImageService {
     return imageRepository.findByExternalKey(key);
   }
 
-  public Optional<Image> updateDescription(UUID externalKey, String description) {
+  public Optional<String> updateDescription(UUID externalKey, String description) {
     return imageRepository.findByExternalKey(externalKey)
-            .map((image) -> {
-              image.setDescription(description);
-              return imageRepository.save(image);
-            });
-
+        .map((image) -> {
+          image.setDescription(description);
+          return imageRepository.save(image);
+        })
+        .map(Image::getDescription);
   }
 
   /**
@@ -85,7 +85,8 @@ public class ImageService {
     image.setTitle(title);
     image.setDescription(description);
     image.setName(originalFilename != null ? originalFilename : UNTITLED_FILENAME);
-    image.setContentType(contentType != null ? contentType : MediaType.APPLICATION_OCTET_STREAM_VALUE);
+    image.setContentType(
+        contentType != null ? contentType : MediaType.APPLICATION_OCTET_STREAM_VALUE);
     image.setPath(reference);
     return imageRepository.save(image);
   }
@@ -113,7 +114,6 @@ public class ImageService {
   }
 
 
-
   public Streamable<Image> search(String fragment) {
     Streamable<Image> images;
     if (fragment != null) {
@@ -123,7 +123,9 @@ public class ImageService {
               .and(imageRepository.findAllByDescriptionContainsOrderByTitleAsc(fragment))
               .toSet()
       );
-    } else images = imageRepository.findAllByOrderByTitleAsc();
+    } else {
+      images = imageRepository.findAllByOrderByTitleAsc();
+    }
     return images;
   }
 
