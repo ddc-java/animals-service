@@ -36,4 +36,9 @@ build/
 derby.log
 /db/
 
+### Uploads
+/uploads/
+/test-uploads/
+
+
 .floo*

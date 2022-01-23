@@ -189,6 +189,7 @@ class ImageControllerTest {
         .andDo(
             document(
                 "images/get-valid",
+                preprocessRequest(prettyPrint()),
                 preprocessResponse(prettyPrint()),
                 pathParameters(getPathVariables()),
                 relaxedResponseFields(getImageFields())
